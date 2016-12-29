@@ -1,0 +1,3 @@
+[submodule "rust-webplatform"]
+	path = rust-webplatform
+	url = https://github.com/seppo0010/rust-webplatform.git

@@ -1,0 +1,7 @@
+[package]
+name = "test-webplatform"
+version = "0.1.0"
+authors = ["root"]
+
+[dependencies.webplatform]
+path = 'rust-webplatform'
