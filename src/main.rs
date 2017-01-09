@@ -1,37 +1,78 @@
-#[macro_use(js)]
 extern crate webplatform;
 
-use std::rc::Rc;
-
-trait Renderable {
-    fn html(&self) -> String;
+pub struct Document<'a> {
+    inner: webplatform::Document<'a>,
+    page: Box<Page>,
 }
 
-#[derive(Default)]
-struct SubmitForm {}
+impl<'a> Document<'a> {
+    fn render_page(&mut self) {
+        let body = self.inner.element_query("body").unwrap();
+        body.html_set(&*self.page.render());
+    }
 
-impl SubmitForm {}
+    pub fn init(page: Box<Page>) -> Self {
+        let mut d = Document {
+            inner: webplatform::init(),
+            page: page,
+        };
+        d.render_page();
+        webplatform::spin();
+        d
+    }
 
-impl Renderable for SubmitForm {
-    fn html(&self) -> String {
-        "<form><input type='text' name='message'></form>".to_owned()
+    pub fn set_page(&mut self, page: Box<Page>) {
+        self.page = page;
+        self.render_page();
     }
 }
 
+pub trait Page {
+    fn render(&self) -> String;
+}
+
+struct MyPage {
+    selected: String,
+}
+
+impl MyPage {
+    fn new() -> Self {
+        MyPage { selected: "hello".to_string() }
+    }
+}
+
+macro_rules! html {
+    ($tag:ident $({$event:ident => |mut self| $callback: tt })* [ $($inner:tt)* ] ) => {{
+        format!("<{tag}>{inner}</{tag}>",
+            tag=stringify!($tag),
+            inner=html!($($inner)*),
+        )
+    }};
+    ($str: expr) => {{
+        $str
+    }};
+
+    ($el:tt $($rest:tt)*) => {{
+        format("{}{}", $el, html!($($rest)*))
+    }};
+}
+
+impl Page for MyPage {
+    fn render(&self) -> String {
+        html!(
+            h1[
+                a{click => |mut self| {
+                        self.set_selected("Goodbye".to_owned())
+                }}[
+                    format!("{} world", self.selected)
+                ]
+            ]
+        )
+    }
+}
+
+
 fn main() {
-    let document = Rc::new(webplatform::init());
-    let body = document.element_query("body").unwrap();
-    let submit_form = SubmitForm::default();
-    body.html_set(&*submit_form.html());
-    let form = document.element_query("form").unwrap();
-    form.on("submit", move |e| {
-        let document = document.clone();
-        e.prevent_default();
-        webplatform::ajax_get(&*document.clone(), "data", move |s| {
-            let body = document.element_query("body").unwrap();
-            body.html_set(&*format!("<pre>{:?}\n{}</pre>",
-                s.as_result(),
-                s.response_text().unwrap()));
-        });
-    });
+    let p = Box::new(MyPage::new());
+    Document::init(p);
 }
