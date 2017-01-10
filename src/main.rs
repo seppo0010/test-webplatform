@@ -1,34 +1,54 @@
+#[macro_use(js)]
 extern crate webplatform;
+extern crate libc;
+use std::ffi::CString;
+use webplatform::Interop;
+
+use std::rc::Rc;
+use std::cell::{RefCell,RefMut};
+
+macro_rules! html {
+    ($document: ident, $me: ident, $tag:ident $({ $event:ident => $callback: block })* [ $($inner:tt)* ] ) => {{
+        let id = js! { (stringify!($tag), html!($document, $me, $($inner)*)) b"\
+            var el = document.createElement(UTF8ToString($0));\
+            el.appendChild(WEBPLATFORM.rs_refs[$1]);\
+            return WEBPLATFORM.rs_refs.push(el) - 1;\
+        \0" };
+        $(
+            let me = $me.clone();
+            webplatform::HtmlNode { id: id, doc: $document }.on(stringify!($event), move |e| {
+                let f = $callback;
+                f(e, me.borrow_mut());
+            });
+        )*
+        id
+    }};
+    ($document: ident, $me: ident, $str: expr) => {{
+        js! { (&*$str) b"\
+            var el = document.createTextNode(UTF8ToString($0));\
+            return WEBPLATFORM.rs_refs.push(el) - 1;\
+        \0" }
+    }};
+}
 
 pub struct Document<'a> {
     inner: webplatform::Document<'a>,
-    page: Box<Page>,
 }
 
 impl<'a> Document<'a> {
-    fn render_page(&mut self) {
-        let body = self.inner.element_query("body").unwrap();
-        body.html_set(&*self.page.render());
-    }
-
-    pub fn init(page: Box<Page>) -> Self {
-        let mut d = Document {
+    pub fn init<P: Page>(page: P) -> Self {
+        let d = Document {
             inner: webplatform::init(),
-            page: page,
         };
-        d.render_page();
+        let j = page.render(&d.inner);
+        js! { (j) b"document.getElementsByTagName('body')[0].appendChild(WEBPLATFORM.rs_refs[$0])" };
         webplatform::spin();
         d
-    }
-
-    pub fn set_page(&mut self, page: Box<Page>) {
-        self.page = page;
-        self.render_page();
     }
 }
 
 pub trait Page {
-    fn render(&self) -> String;
+    fn render<'a>(self, document: &webplatform::Document<'a>) -> i32;
 }
 
 struct MyPage {
@@ -39,32 +59,25 @@ impl MyPage {
     fn new() -> Self {
         MyPage { selected: "hello".to_string() }
     }
-}
 
-macro_rules! html {
-    ($tag:ident $({$event:ident => |mut self| $callback: tt })* [ $($inner:tt)* ] ) => {{
-        format!("<{tag}>{inner}</{tag}>",
-            tag=stringify!($tag),
-            inner=html!($($inner)*),
-        )
-    }};
-    ($str: expr) => {{
-        $str
-    }};
+    fn selected(&self) -> &str {
+        &*self.selected
+    }
 
-    ($el:tt $($rest:tt)*) => {{
-        format("{}{}", $el, html!($($rest)*))
-    }};
+    fn set_selected(&mut self, _event: webplatform::Event) {
+        self.selected = "goodbye".to_owned();
+    }
 }
 
 impl Page for MyPage {
-    fn render(&self) -> String {
-        html!(
+    fn render<'a>(self, document: &webplatform::Document<'a>) -> i32 {
+        let me = Rc::new(RefCell::new(self));
+        html!(document, me,
             h1[
-                a{click => |mut self| {
-                        self.set_selected("Goodbye".to_owned())
-                }}[
-                    format!("{} world", self.selected)
+                a{click => { |event, mut me: RefMut<MyPage>| {
+                    me.set_selected(event);
+                }}}[
+                    format!("{} world", me.borrow().selected())
                 ]
             ]
         )
@@ -73,6 +86,6 @@ impl Page for MyPage {
 
 
 fn main() {
-    let p = Box::new(MyPage::new());
+    let p = MyPage::new();
     Document::init(p);
 }

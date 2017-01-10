@@ -3,5 +3,8 @@ name = "test-webplatform"
 version = "0.1.0"
 authors = ["root"]
 
+[dependencies]
+libc = '0.2.16'
+
 [dependencies.webplatform]
 path = 'rust-webplatform'
