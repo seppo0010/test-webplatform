@@ -2,6 +2,8 @@
 extern crate webplatform;
 extern crate libc;
 use std::ffi::CString;
+use std::rc::Rc;
+use std::cell::RefCell;
 use webplatform::Interop;
 
 /*
@@ -50,22 +52,32 @@ pub enum HtmlNode {
     Tag {
         tag_name: String,
         content: Vec<HtmlNode>,
+        events: Vec<(String, Rc<Box<FnMut(webplatform::Event)>>)>,
     },
     Text(String),
 }
 
 impl HtmlNode {
-    fn js_create<'a>(&self, document: &webplatform::Document<'a>) -> i32 {
+    fn js_create<'a>(&self, doc: &webplatform::Document<'a>) -> i32 {
         match *self {
-            HtmlNode::Tag {ref tag_name, ref content}  => {
+            HtmlNode::Tag {ref tag_name, ref content, ref events}  => {
                 let id = js! { (&**tag_name) b"\
                     var el = document.createElement(UTF8ToString($0));\
                     return WEBPLATFORM.rs_refs.push(el) - 1;\
                 \0" };
                 for child in content.iter() {
-                    js! { (id, child.js_create(document)) b"\
+                    js! { (id, child.js_create(doc)) b"\
                         WEBPLATFORM.rs_refs[$0].appendChild(WEBPLATFORM.rs_refs[$1]);\
                     \0" };
+                }
+                for event in events.iter() {
+                    let mut f = event.1.clone();
+                    webplatform::HtmlNode { id: id, doc: doc }.on(&*event.0, move |e| {
+                            match Rc::get_mut(&mut f) {
+                                Some(ref mut s) => s(e),
+                                None => panic!("cannot unwrap"),
+                            }
+                    });
                 }
                 id
             },
@@ -80,7 +92,7 @@ impl HtmlNode {
 }
 
 pub trait Component: Sized {
-    fn render(&self) -> HtmlNode;
+    fn render(self) -> HtmlNode;
 }
 
 struct MyComponent {
@@ -102,11 +114,26 @@ impl MyComponent {
 }
 
 impl Component for MyComponent {
-    fn render(&self) -> HtmlNode {
+    fn render(self) -> HtmlNode {
+        let s = Rc::new(RefCell::new(self));
         HtmlNode::Tag {
             tag_name: "a".to_owned(),
             content: vec![
-                HtmlNode::Text(format!("{} world", self.selected)),
+                HtmlNode::Text(s.clone().borrow().selected().to_owned()),
+            ],
+            events: vec![
+                ("click".to_owned(), {
+                    let me = s.clone();
+                    Rc::new(Box::new(move |_e| {
+                        webplatform::alert(me.borrow().selected());
+                    }))
+                }),
+                ("mouseover".to_owned(), {
+                    let me = s.clone();
+                    Rc::new(Box::new(move |_e| {
+                        webplatform::alert(&*format!("AAA: {}", me.borrow().selected()));
+                    }))
+                }),
             ],
         }
     }
