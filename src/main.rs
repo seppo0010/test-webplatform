@@ -4,9 +4,7 @@ extern crate libc;
 use std::ffi::CString;
 use webplatform::Interop;
 
-use std::rc::Rc;
-use std::cell::{RefCell,RefMut};
-
+/*
 macro_rules! html {
     ($document: ident, $me: ident, $tag:ident $({ $event:ident => $callback: block })* [ $($inner:tt)* ] ) => {{
         let id = js! { (stringify!($tag), html!($document, $me, $($inner)*)) b"\
@@ -30,34 +28,68 @@ macro_rules! html {
         \0" }
     }};
 }
+*/
 
 pub struct Document<'a> {
     inner: webplatform::Document<'a>,
 }
 
 impl<'a> Document<'a> {
-    pub fn init<P: Page>(page: P) -> Self {
+    pub fn init<C: Component>(component: C) -> Self {
         let d = Document {
             inner: webplatform::init(),
         };
-        let j = page.render(&d.inner);
+        let j = component.render().js_create(&d.inner);
         js! { (j) b"document.getElementsByTagName('body')[0].appendChild(WEBPLATFORM.rs_refs[$0])" };
         webplatform::spin();
         d
     }
 }
 
-pub trait Page {
-    fn render<'a>(self, document: &webplatform::Document<'a>) -> i32;
+pub enum HtmlNode {
+    Tag {
+        tag_name: String,
+        content: Vec<HtmlNode>,
+    },
+    Text(String),
 }
 
-struct MyPage {
+impl HtmlNode {
+    fn js_create<'a>(&self, document: &webplatform::Document<'a>) -> i32 {
+        match *self {
+            HtmlNode::Tag {ref tag_name, ref content}  => {
+                let id = js! { (&**tag_name) b"\
+                    var el = document.createElement(UTF8ToString($0));\
+                    return WEBPLATFORM.rs_refs.push(el) - 1;\
+                \0" };
+                for child in content.iter() {
+                    js! { (id, child.js_create(document)) b"\
+                        WEBPLATFORM.rs_refs[$0].appendChild(WEBPLATFORM.rs_refs[$1]);\
+                    \0" };
+                }
+                id
+            },
+            HtmlNode::Text(ref s) => {
+                js! { (&**s) b"\
+                    var el = document.createTextNode(UTF8ToString($0));\
+                    return WEBPLATFORM.rs_refs.push(el) - 1;\
+                \0" }
+            }
+        }
+    }
+}
+
+pub trait Component: Sized {
+    fn render(&self) -> HtmlNode;
+}
+
+struct MyComponent {
     selected: String,
 }
 
-impl MyPage {
+impl MyComponent {
     fn new() -> Self {
-        MyPage { selected: "hello".to_string() }
+        MyComponent { selected: "hello".to_string() }
     }
 
     fn selected(&self) -> &str {
@@ -69,23 +101,19 @@ impl MyPage {
     }
 }
 
-impl Page for MyPage {
-    fn render<'a>(self, document: &webplatform::Document<'a>) -> i32 {
-        let me = Rc::new(RefCell::new(self));
-        html!(document, me,
-            h1[
-                a{click => { |event, mut me: RefMut<MyPage>| {
-                    me.set_selected(event);
-                }}}[
-                    format!("{} world", me.borrow().selected())
-                ]
-            ]
-        )
+impl Component for MyComponent {
+    fn render(&self) -> HtmlNode {
+        HtmlNode::Tag {
+            tag_name: "a".to_owned(),
+            content: vec![
+                HtmlNode::Text(format!("{} world", self.selected)),
+            ],
+        }
     }
 }
 
 
 fn main() {
-    let p = MyPage::new();
+    let p = MyComponent::new();
     Document::init(p);
 }
