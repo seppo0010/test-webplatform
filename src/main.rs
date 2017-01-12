@@ -97,11 +97,12 @@ pub trait Component: Sized {
 
 struct MyComponent {
     selected: String,
+    count: u32,
 }
 
 impl MyComponent {
     fn new() -> Self {
-        MyComponent { selected: "hello".to_string() }
+        MyComponent { selected: "hello".to_string(), count: 0 }
     }
 
     fn selected(&self) -> &str {
@@ -111,6 +112,14 @@ impl MyComponent {
     fn set_selected(&mut self, _event: webplatform::Event) {
         self.selected = "goodbye".to_owned();
     }
+
+    fn counter(&self) -> u32 {
+        self.count
+    }
+
+    fn inc(&mut self) {
+        self.count += 1;
+    }
 }
 
 impl Component for MyComponent {
@@ -118,20 +127,23 @@ impl Component for MyComponent {
         let s = Rc::new(RefCell::new(self));
         HtmlNode::Tag {
             tag_name: "a".to_owned(),
-            content: vec![
-                HtmlNode::Text(s.clone().borrow().selected().to_owned()),
-            ],
+            content: vec![{
+                let a = s.clone();
+                let b = a.borrow();
+                HtmlNode::Text(b.selected().to_owned())
+            }],
             events: vec![
                 ("click".to_owned(), {
                     let me = s.clone();
                     Rc::new(Box::new(move |_e| {
-                        webplatform::alert(me.borrow().selected());
+                        let s = me.borrow();
+                        webplatform::alert(&*format!("{}{}", s.counter(), s.selected()));
                     }))
                 }),
                 ("mouseover".to_owned(), {
                     let me = s.clone();
                     Rc::new(Box::new(move |_e| {
-                        webplatform::alert(&*format!("AAA: {}", me.borrow().selected()));
+                        me.borrow_mut().inc();
                     }))
                 }),
             ],
