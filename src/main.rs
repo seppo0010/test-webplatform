@@ -41,31 +41,48 @@ impl<'a> Document<'a> {
         let d = Document {
             inner: webplatform::init(),
         };
-        let j = component.render().js_create(&d.inner);
+        let mut c = OuterComponent::new(component);
+        let j = c.node.js_create(&d.inner);
         js! { (j) b"document.getElementsByTagName('body')[0].appendChild(WEBPLATFORM.rs_refs[$0])" };
         webplatform::spin();
         d
     }
 }
 
-pub enum HtmlNode {
+pub struct HtmlNode {
+    id: i32,
+    content: HtmlNodeContent,
+}
+
+impl HtmlNode {
+    fn js_create<'a>(&mut self, doc: &webplatform::Document<'a>) -> i32 {
+        self.id = self.content.js_create(doc);
+        self.id
+    }
+
+    fn js_update<'a>(&mut self, doc: &webplatform::Document<'a>) {
+        self.content.js_update(self.id, doc);
+    }
+}
+
+pub enum HtmlNodeContent {
     Tag {
         tag_name: String,
-        content: Vec<HtmlNode>,
+        children: Vec<HtmlNode>,
         events: Vec<(String, Rc<Box<FnMut(webplatform::Event)>>)>,
     },
     Text(String),
 }
 
-impl HtmlNode {
-    fn js_create<'a>(&self, doc: &webplatform::Document<'a>) -> i32 {
+impl HtmlNodeContent {
+    fn js_create<'a>(&mut self, doc: &webplatform::Document<'a>) -> i32 {
         match *self {
-            HtmlNode::Tag {ref tag_name, ref content, ref events}  => {
+            HtmlNodeContent::Tag {ref tag_name, ref mut children, ref events}  => {
                 let id = js! { (&**tag_name) b"\
                     var el = document.createElement(UTF8ToString($0));\
                     return WEBPLATFORM.rs_refs.push(el) - 1;\
                 \0" };
-                for child in content.iter() {
+                for child in children.iter_mut() {
                     js! { (id, child.js_create(doc)) b"\
                         WEBPLATFORM.rs_refs[$0].appendChild(WEBPLATFORM.rs_refs[$1]);\
                     \0" };
@@ -81,7 +98,7 @@ impl HtmlNode {
                 }
                 id
             },
-            HtmlNode::Text(ref s) => {
+            HtmlNodeContent::Text(ref s) => {
                 js! { (&**s) b"\
                     var el = document.createTextNode(UTF8ToString($0));\
                     return WEBPLATFORM.rs_refs.push(el) - 1;\
@@ -89,10 +106,37 @@ impl HtmlNode {
             }
         }
     }
+
+    fn js_update<'a>(&mut self, id: i32, _doc: &webplatform::Document<'a>) {
+        match *self {
+            HtmlNodeContent::Tag {tag_name: _, children: _, events: _}  => {
+            },
+            HtmlNodeContent::Text(ref s) => {
+                js! { (id, &**s) b"\
+                    WEBPLATFORM.rs_refs[$0].textContent = UTF8ToString($1)\
+                \0" };
+            }
+        }
+    }
+}
+
+struct OuterComponent<C: Component> {
+    inner: Rc<RefCell<C>>,
+    node: HtmlNode,
+}
+
+impl<C: Component> OuterComponent<C> {
+    fn new(inner: C) -> Self {
+        let inner = Rc::new(RefCell::new(inner));
+        OuterComponent {
+            inner: inner.clone(),
+            node: C::render(inner.clone()),
+        }
+    }
 }
 
 pub trait Component: Sized {
-    fn render(self) -> HtmlNode;
+    fn render(s: Rc<RefCell<Self>>) -> HtmlNode;
 }
 
 struct MyComponent {
@@ -123,30 +167,33 @@ impl MyComponent {
 }
 
 impl Component for MyComponent {
-    fn render(self) -> HtmlNode {
-        let s = Rc::new(RefCell::new(self));
-        HtmlNode::Tag {
-            tag_name: "a".to_owned(),
-            content: vec![{
-                let a = s.clone();
-                let b = a.borrow();
-                HtmlNode::Text(b.selected().to_owned())
-            }],
-            events: vec![
-                ("click".to_owned(), {
-                    let me = s.clone();
-                    Rc::new(Box::new(move |_e| {
-                        let s = me.borrow();
-                        webplatform::alert(&*format!("{}{}", s.counter(), s.selected()));
-                    }))
-                }),
-                ("mouseover".to_owned(), {
-                    let me = s.clone();
-                    Rc::new(Box::new(move |_e| {
-                        me.borrow_mut().inc();
-                    }))
-                }),
-            ],
+    fn render(s: Rc<RefCell<Self>>) -> HtmlNode {
+        HtmlNode {
+            id: -1,
+            content: HtmlNodeContent::Tag {
+                tag_name: "a".to_owned(),
+                children: vec![{
+                    let a = s.clone();
+                    let b = a.borrow();
+                    HtmlNode { id: -1, content: HtmlNodeContent::Text(b.selected().to_owned()) }
+                }],
+                events: vec![
+                    ("click".to_owned(), {
+                        let me = s.clone();
+                        Rc::new(Box::new(move |_e| {
+                            let s = me.borrow();
+                            webplatform::alert(&*format!("{}{}", s.counter(), s.selected()));
+                        }))
+                    }),
+                    ("mouseover".to_owned(), {
+                        let me = s.clone();
+                        Rc::new(Box::new(move |_e| {
+                            let mut me = me.borrow_mut();
+                            me.inc();
+                        }))
+                    }),
+                ],
+            }
         }
     }
 }
